@@ -36,13 +36,15 @@ def main() -> None:
     dialog_agent = DialogAgent(
         name="Assistant",
         sys_prompt="You're a helpful assistant.",
-        # modify model_config_name if you use other model configs,
-        # such as:
+        # Change model_config_name if you use other model configs.
+        model_config_name="openai_chat_gpt-3.5-turbo",
+        # The following are some mappings of model config file
+        # (.json) to the model_config_name in it.
+        # openai_chat_template.json -> openai_chat_gpt-4
         # gemini_chat_template.json -> gemini_chat-gemini-pro
         # dashscope_chat_template.json -> dashscope_chat-qwen-max
         # dashscope_chat_template.json -> dashscope_chat-qwen-turbo
         # dashscope_chat_template.json -> dashscope_chat-qwen-plus
-        model_config_name="openai_chat_gpt-3.5-turbo",
     )
     user_agent = UserAgent()
 
