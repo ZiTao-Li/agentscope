@@ -10,6 +10,7 @@ from loguru import logger
 
 try:
     from llama_index.core.base.base_retriever import BaseRetriever
+    from llama_index.retrievers.bm25 import BM25Retriever
     from llama_index.core.base.embeddings.base import (
         BaseEmbedding,
         Embedding,
@@ -31,6 +32,7 @@ except ImportError as import_error:
     from agentscope.utils.tools import ImportErrorReporter
 
     BaseRetriever = ImportErrorReporter(import_error, "full")
+    BM25Retriever = ImportErrorReporter(import_error, "full")
     BaseEmbedding = ImportErrorReporter(import_error, "full")
     Embedding = ImportErrorReporter(import_error, "full")
     IngestionPipeline = ImportErrorReporter(import_error, "full")
@@ -50,7 +52,6 @@ from agentscope.constants import (
     DEFAULT_CHUNK_OVERLAP,
 )
 from agentscope.rag.knowledge import Knowledge
-
 
 try:
 
@@ -202,6 +203,7 @@ class LlamaIndexKnowledge(Knowledge):
         self.overwrite_index = overwrite_index
         self.showprogress = showprogress
         self.index = None
+        self.bm25_retriever = None
         # ensure the emb_model is compatible with LlamaIndex
         if isinstance(emb_model, ModelWrapperBase):
             self.emb_model = _EmbeddingModel(emb_model)
@@ -231,6 +233,7 @@ class LlamaIndexKnowledge(Knowledge):
         """
         if os.path.exists(self.persist_dir):
             self._load_index()
+            # todo: when shall we refresh index?
             # self.refresh_index()
         else:
             self._data_to_index()
@@ -443,7 +446,17 @@ class LlamaIndexKnowledge(Knowledge):
             similarity_top_k=similarity_top_k or DEFAULT_TOP_K,
             **kwargs,
         )
+
+        if not self.bm25_retriever:
+            self.bm25_retriever = BM25Retriever.from_defaults(
+                nodes=self.index.docstore.docs.values(),
+                similarity_top_k=similarity_top_k,
+            )
+        else:
+            self.bm25_retriever.similarity_top_k = similarity_top_k
+
         logger.info("retriever is ready.")
+
         return retriever
 
     def retrieve(
@@ -452,8 +465,9 @@ class LlamaIndexKnowledge(Knowledge):
         similarity_top_k: int = None,
         to_list_strs: bool = False,
         retriever: Optional[BaseRetriever] = None,
+        additional_sparse_retrieve: bool = False,
         **kwargs: Any,
-    ) -> list[Any]:
+    ) -> Union[List[Any], dict]:
         """
         This is a basic retrieve function for knowledge.
         It will build a retriever on the fly and return the
@@ -469,21 +483,37 @@ class LlamaIndexKnowledge(Knowledge):
                 if False, return NodeWithScore
             retriever (BaseRetriever):
                 for advanced usage, user can pass their own retriever.
+            additional_sparse_retrieve (bool):
+                whether to use sparse retriever
         Return:
             list[Any]: list of str or NodeWithScore
 
         More advanced query processing can refer to
         https://docs.llamaindex.ai/en/stable/examples/query_transformations/query_transform_cookbook.html
         """
+        retrieved_res = None
         if retriever is None:
             retriever = self._get_retriever(similarity_top_k)
         retrieved = retriever.retrieve(str(query))
+        retrieved_res = retrieved
+
+        if additional_sparse_retrieve and self.bm25_retriever:
+            bm25_retrieved = self.bm25_retriever.retrieve(str(query))
+            retrieved_res_dict = {}
+            retrieved_res_dict["dense"] = retrieved_res
+            retrieved_res_dict["bm25"] = [
+                x for x in bm25_retrieved if x.score > 0
+            ]
+            retrieved_res = retrieved_res_dict
+
+        # todo: modify the api to support multi retrivers
         if to_list_strs:
             results = []
             for node in retrieved:
                 results.append(node.get_text())
             return results
-        return retrieved
+
+        return retrieved_res
 
     def refresh_index(self) -> None:
         """
