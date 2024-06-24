@@ -5,7 +5,7 @@ into AgentScope package
 """
 
 import os.path
-from typing import Any, Optional, List, Union, Dict
+from typing import Any, Optional, List, Union
 from loguru import logger
 
 try:
@@ -64,9 +64,9 @@ try:
         _emb_model_wrapper: ModelWrapperBase = PrivateAttr()
 
         def __init__(
-                self,
-                emb_model: ModelWrapperBase,
-                embed_batch_size: int = 1,
+            self,
+            emb_model: ModelWrapperBase,
+            embed_batch_size: int = 1,
         ) -> None:
             """
             Dummy wrapper to convert a ModelWrapperBase to llama Index
@@ -123,8 +123,8 @@ try:
             return self._get_text_embedding(text)
 
         async def _aget_text_embeddings(
-                self,
-                texts: List[str],
+            self,
+            texts: List[str],
         ) -> List[List[float]]:
             """Asynchronously get text embeddings."""
             return self._get_text_embeddings(texts)
@@ -147,15 +147,15 @@ class LlamaIndexKnowledge(Knowledge):
     """
 
     def __init__(
-            self,
-            knowledge_id: str,
-            emb_model: Union[ModelWrapperBase, BaseEmbedding, None] = None,
-            knowledge_config: Optional[dict] = None,
-            model: Optional[ModelWrapperBase] = None,
-            persist_root: Optional[str] = None,
-            overwrite_index: Optional[bool] = False,
-            showprogress: Optional[bool] = True,
-            **kwargs: Any,
+        self,
+        knowledge_id: str,
+        emb_model: Union[ModelWrapperBase, BaseEmbedding, None] = None,
+        knowledge_config: Optional[dict] = None,
+        model: Optional[ModelWrapperBase] = None,
+        persist_root: Optional[str] = None,
+        overwrite_index: Optional[bool] = False,
+        showprogress: Optional[bool] = True,
+        **kwargs: Any,
     ) -> None:
         """
         initialize the knowledge component based on the
@@ -294,9 +294,9 @@ class LlamaIndexKnowledge(Knowledge):
         logger.info("index persisted.")
 
     def _data_to_docs(
-            self,
-            query: Optional[str] = None,
-            config: dict = None,
+        self,
+        query: Optional[str] = None,
+        config: dict = None,
     ) -> Any:
         """
         This method set the loader as needed, or just use the default setting.
@@ -329,9 +329,9 @@ class LlamaIndexKnowledge(Knowledge):
         return documents
 
     def _docs_to_nodes(
-            self,
-            documents: List[Document],
-            transformations: Optional[list[Optional[TransformComponent]]] = None,
+        self,
+        documents: List[Document],
+        transformations: Optional[list[Optional[TransformComponent]]] = None,
     ) -> Any:
         """
         Convert the loaded documents to nodes using transformations.
@@ -424,9 +424,9 @@ class LlamaIndexKnowledge(Knowledge):
         return transformations
 
     def _get_retriever(
-            self,
-            similarity_top_k: int = None,
-            **kwargs: Any,
+        self,
+        similarity_top_k: int = None,
+        **kwargs: Any,
     ) -> BaseRetriever:
         """
         Set the retriever as needed, or just use the default setting.
@@ -448,22 +448,26 @@ class LlamaIndexKnowledge(Knowledge):
         )
 
         if not self.bm25_retriever:
-            self.bm25_retriever = BM25Retriever.from_defaults(nodes=self.index.docstore.docs.values(),
-                                                              similarity_top_k=DEFAULT_TOP_K)
+            self.bm25_retriever = BM25Retriever.from_defaults(
+                nodes=self.index.docstore.docs.values(),
+                similarity_top_k=similarity_top_k,
+            )
+        else:
+            self.bm25_retriever.similarity_top_k = similarity_top_k
 
         logger.info("retriever is ready.")
 
         return retriever
 
     def retrieve(
-            self,
-            query: str,
-            similarity_top_k: int = None,
-            to_list_strs: bool = False,
-            retriever: Optional[BaseRetriever] = None,
-            use_sparse_retrieve: bool = False,
-            **kwargs: Any,
-    ) -> Union[List[Any], Dict[str, list[Any]]]:
+        self,
+        query: str,
+        similarity_top_k: int = None,
+        to_list_strs: bool = False,
+        retriever: Optional[BaseRetriever] = None,
+        additional_sparse_retrieve: bool = False,
+        **kwargs: Any,
+    ) -> Union[List[Any], dict]:
         """
         This is a basic retrieve function for knowledge.
         It will build a retriever on the fly and return the
@@ -479,6 +483,8 @@ class LlamaIndexKnowledge(Knowledge):
                 if False, return NodeWithScore
             retriever (BaseRetriever):
                 for advanced usage, user can pass their own retriever.
+            additional_sparse_retrieve (bool):
+                whether to use sparse retriever
         Return:
             list[Any]: list of str or NodeWithScore
 
@@ -491,11 +497,13 @@ class LlamaIndexKnowledge(Knowledge):
         retrieved = retriever.retrieve(str(query))
         retrieved_res = retrieved
 
-        if use_sparse_retrieve and self.bm25_retriever:
+        if additional_sparse_retrieve and self.bm25_retriever:
             bm25_retrieved = self.bm25_retriever.retrieve(str(query))
-            retrieved_res_dict = dict()
+            retrieved_res_dict = {}
             retrieved_res_dict["dense"] = retrieved_res
-            retrieved_res_dict["bm25"] = [x for x in bm25_retrieved if x.score > 0]
+            retrieved_res_dict["bm25"] = [
+                x for x in bm25_retrieved if x.score > 0
+            ]
             retrieved_res = retrieved_res_dict
 
         # todo: modify the api to support multi retrivers
@@ -523,9 +531,9 @@ class LlamaIndexKnowledge(Knowledge):
             )
 
     def _insert_docs_to_index(
-            self,
-            documents: List[Document],
-            transformations: TransformComponent,
+        self,
+        documents: List[Document],
+        transformations: TransformComponent,
     ) -> None:
         """
         Add documents to the index. Given a list of documents, we first test if
@@ -579,8 +587,8 @@ class LlamaIndexKnowledge(Knowledge):
         self.index.storage_context.persist(persist_dir=self.persist_dir)
 
     def _delete_docs_from_index(
-            self,
-            documents: List[Document],
+        self,
+        documents: List[Document],
     ) -> None:
         """
         Delete the nodes that are associated with a list of documents.
