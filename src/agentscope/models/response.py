@@ -17,11 +17,16 @@ class ModelResponse:
     def __init__(
         self,
         text: Optional[str] = None,
+        reason_text: Optional[str] = None,
         embedding: Optional[Sequence] = None,
         image_urls: Optional[Sequence[str]] = None,
         raw: Any = None,
         parsed: Optional[Any] = None,
-        stream: Optional[Generator[str, None, None]] = None,
+        stream: Union[
+            None,
+            Generator[str, None, None],
+            Generator[tuple[str, str, list[ToolUseBlock]], None, None],
+        ] = None,
         tool_calls: Optional[list[ToolUseBlock]] = None,
     ) -> None:
         """Initialize the model response.
@@ -43,6 +48,7 @@ class ModelResponse:
                 The tool calls made by the model.
         """
         self._text = text
+        self._reason_text = reason_text
         self.embedding = embedding
         self.image_urls = image_urls
         self.raw = raw
@@ -65,6 +71,21 @@ class ModelResponse:
     def text(self, value: str) -> None:
         """Set the text field."""
         self._text = value
+
+    @property
+    def reason_text(self) -> Union[str, None]:
+        """Return the text field. If the stream field is available, the text
+        field will be updated accordingly."""
+        if self._reason_text is None:
+            if self.stream is not None:
+                for _, chunk in self.stream:
+                    self._text = chunk
+        return self._text
+
+    @reason_text.setter
+    def reason_text(self, value: str) -> None:
+        """Set the reason_text field."""
+        self._reason_text = value
 
     @property
     def stream(self) -> Union[None, Generator[Tuple[bool, str], None, None]]:
@@ -95,14 +116,41 @@ class ModelResponse:
             return
 
         try:
-            last_text = next(self._stream)
+            last_chunk = next(self._stream)
 
-            for text in self._stream:
-                self._text = last_text
-                yield False, last_text
-                last_text = text
-            self._text = last_text
-            yield True, last_text
+            for chunk in self._stream:
+                if isinstance(chunk, tuple):
+                    self._reason_text = chunk[0]
+                    self._text = chunk[1]
+                    self.tool_calls = chunk[2]
+                    if (
+                        self._reason_text is not None
+                        and len(self._reason_text) > 0
+                    ):
+                        yield False, (
+                            f"[Thinking]\n{self._reason_text}\n"
+                            f"[Answer]\n{self._text}"
+                        )
+                    else:
+                        yield False, self._text
+                    last_chunk = chunk
+                elif isinstance(chunk, str):
+                    self._text = chunk
+                    yield False, chunk
+                    last_chunk = chunk
+            if isinstance(last_chunk, tuple):
+                self._reason_text = last_chunk[0]
+                self._text = last_chunk[1]
+                self.tool_calls = last_chunk[2]
+            else:
+                self._text = last_chunk
+            if self._reason_text is not None and len(self._reason_text) > 0:
+                yield True, (
+                    f"[Thinking]\n{self._reason_text}\n"
+                    f"[Answer]\n{self._text}"
+                )
+            else:
+                yield True, self._text or ""
 
             return
         except StopIteration:

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Model wrapper for DashScope models"""
+# pylint: disable=C0302
 import json
 from abc import ABC
 from http import HTTPStatus
+from json import JSONDecodeError
 from typing import Any, Union, List, Optional, Generator
 
 from loguru import logger
@@ -147,6 +149,94 @@ class DashScopeChatWrapper(DashScopeWrapperBase):
 
         self.stream = stream
 
+    def generator(
+        self,
+        response: Generator[GenerationResponse, None, None],
+        **kwargs: Any,
+    ) -> Generator[tuple[str, str, list[ToolUseBlock]], None, None]:
+        """
+        A generator for DashScope chat API responses.
+        """
+        last_chunk = None
+        ans_text = ""
+        reasoning_text = ""
+        tool_use_blocks = []
+        tool_arg_strings = []
+        for chunk in response:  # pylint: disable=R1702
+            if chunk.status_code != HTTPStatus.OK:
+                error_msg = (
+                    f"Request id: {chunk.request_id}\n"
+                    f"Status code: {chunk.status_code}\n"
+                    f"Error code: {chunk.code}\n"
+                    f"Error message: {chunk.message}"
+                )
+                raise RuntimeError(error_msg)
+
+            msg = chunk.output.choices[0].message
+            if "reasoning_content" in msg and msg.reasoning_content:
+                reasoning_text += msg.reasoning_content
+
+            if "content" in msg and msg.content:
+                ans_text += msg.content
+
+            if "tool_calls" in msg and msg.tool_calls:
+                for tool_call in msg.tool_calls:
+                    index = tool_call["index"]
+
+                    while len(tool_use_blocks) <= index:
+                        tool_use_blocks.append(
+                            ToolUseBlock(
+                                type="tool_use",
+                                id="",
+                                name="",
+                                input={},
+                            ),
+                        )
+                        tool_arg_strings.append("")
+
+                    if "id" in tool_call:
+                        tool_use_blocks[index]["id"] += tool_call.get("id", "")
+
+                    if "function" in tool_call:
+                        func = tool_call["function"]
+                        if "name" in func:
+                            tool_use_blocks[index]["name"] += func.get(
+                                "name",
+                                "",
+                            )
+
+                        if "arguments" in func:
+                            tool_arg_strings[index] += func.get(
+                                "arguments",
+                                "",
+                            )
+                            try:
+                                tool_use_blocks[index]["input"] = json.loads(
+                                    tool_arg_strings[index],
+                                )
+                            except JSONDecodeError:
+                                continue
+
+            yield reasoning_text, ans_text, tool_use_blocks
+            last_chunk = chunk
+
+        # Replace the last chunk with the full text
+        last_chunk.output["choices"][0]["message"]["content"] = ans_text
+        last_chunk.output["choices"][0]["reasoning_content"] = reasoning_text
+        last_chunk.output["choices"][0]["tool_calls"] = [
+            {
+                "function": {
+                    "id": use_block["id"],
+                    "name": use_block["name"],
+                    "arguments": arg_string,
+                },
+            }
+            for use_block, arg_string in zip(tool_use_blocks, tool_arg_strings)
+        ]
+
+        # Save the model invocation and update the monitor
+        self._save_model_invocation_and_update_monitor(kwargs, last_chunk)
+
     def __call__(
         self,
         messages: list,
@@ -243,35 +333,8 @@ class DashScopeChatWrapper(DashScopeWrapperBase):
 
         # step3: invoke llm api, record the invocation and update the monitor
         if stream:
-
-            def generator() -> Generator[str, None, None]:
-                last_chunk = None
-                text = ""
-                for chunk in response:
-                    if chunk.status_code != HTTPStatus.OK:
-                        error_msg = (
-                            f"Request id: {chunk.request_id}\n"
-                            f"Status code: {chunk.status_code}\n"
-                            f"Error code: {chunk.code}\n"
-                            f"Error message: {chunk.message}"
-                        )
-                        raise RuntimeError(error_msg)
-
-                    text += chunk.output["choices"][0]["message"]["content"]
-                    yield text
-                    last_chunk = chunk
-
-                # Replace the last chunk with the full text
-                last_chunk.output["choices"][0]["message"]["content"] = text
-
-                # Save the model invocation and update the monitor
-                self._save_model_invocation_and_update_monitor(
-                    kwargs,
-                    last_chunk,
-                )
-
             return ModelResponse(
-                stream=generator(),
+                stream=self.generator(response),
                 raw=response,
             )
 
